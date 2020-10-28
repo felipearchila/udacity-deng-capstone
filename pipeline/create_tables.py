@@ -1,6 +1,6 @@
 import configparser
 import psycopg2
-import sql_queries
+from sql_queries import SqlQueries
 
 
 def initialize_connection(endpoint, port_number, database_name, database_user, database_password):
@@ -18,6 +18,8 @@ def create_data_warehouse():
     config = configparser.ConfigParser()
     config.read_file(open('dwh.cfg'))
 
+    ddl_queries = SqlQueries()
+
     redshift = initialize_connection(
         config['DWH']['DWH_ENDPOINT'],
         config['DWH']['DWH_PORT'],
@@ -25,13 +27,13 @@ def create_data_warehouse():
         config['DWH']['DWH_DB_USER'],
         config['DWH']['DWH_DB_PASSWORD'])
 
-    create_queries = [sql_queries.create_dim_date, sql_queries.create_dim_time, sql_queries.create_dim_borough,
-                      sql_queries.create_dim_vehicle, sql_queries.create_dim_registrationstate,
-                      sql_queries.create_dim_violation, sql_queries.create_dim_precinct,
-                      sql_queries.create_dim_issuingagency, sql_queries.create_fact_parkingviolation,
-                      sql_queries.create_stage_parkingviolation, sql_queries.create_stage_issuingagency,
-                      sql_queries.create_stage_precinct, sql_queries.create_stage_registrationstate,
-                      sql_queries.create_stage_vehicle, sql_queries.create_stage_violation]
+    create_queries = [ddl_queries.create_dim_date, ddl_queries.create_dim_time, ddl_queries.create_dim_borough,
+                      ddl_queries.create_dim_vehicle, ddl_queries.create_dim_registrationstate,
+                      ddl_queries.create_dim_violation, ddl_queries.create_dim_precinct,
+                      ddl_queries.create_dim_issuingagency, ddl_queries.create_fact_parkingviolation,
+                      ddl_queries.create_stage_parkingviolation, ddl_queries.create_stage_issuingagency,
+                      ddl_queries.create_stage_precinct, ddl_queries.create_stage_registrationstate,
+                      ddl_queries.create_stage_vehicle, ddl_queries.create_stage_violation]
 
     table_names = ['stage_violation', 'stage_vehicle', 'stage_registrationstate', 'stage_precinct', 'stage_issuingagency',
                    'stage_parkingviolation', 'fact_parkingviolation', 'dim_issuingagency', 'dim_precinct',
@@ -39,7 +41,7 @@ def create_data_warehouse():
 
     with redshift.cursor() as crsr:
         for table in table_names:
-            crsr.execute(sql_queries.drop_sql_format.format(table))
+            crsr.execute(ddl_queries.drop_sql_format.format(table))
             redshift.commit()
 
         for query in create_queries:
@@ -47,6 +49,7 @@ def create_data_warehouse():
             redshift.commit()
 
     redshift.close()
+
 
 if __name__ == "__main__":
     create_data_warehouse()
