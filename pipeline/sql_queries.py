@@ -16,11 +16,11 @@ class SqlQueries:
     create_dim_time = """CREATE TABLE IF NOT EXISTS dim_time
     (
         time_key INT PRIMARY KEY,
-        time_code VARCHAR(10),
-        display_time TIMESTAMP,
+        time_timestamp TIMESTAMP,
         hour_number INT,
         minute_number INT,
         am_pm CHAR(2),
+        military_display_time VARCHAR(10),
         military_time_hour_number INT
     );"""
 
@@ -94,9 +94,9 @@ class SqlQueries:
 
     drop_sql_format = "DROP TABLE IF EXISTS {}"
 
-    create_stage_parkingviolation = """CREATE TABLE IF NOT EXISTS stage_parkingviolation
+    create_stage_parking_violations = """CREATE TABLE IF NOT EXISTS stage_parking_violations
     (
-        summons_number VARCHAR(255),
+        summons_number BIGINT,
         plate_id VARCHAR(255),
         registration_state VARCHAR(255),
         plate_type VARCHAR(255),
@@ -134,7 +134,10 @@ class SqlQueries:
         intersecting_street VARCHAR(255),
         time_first_observed VARCHAR(255),
         violation_legal_code VARCHAR(255),
-        violation_description VARCHAR(255)
+        violation_description VARCHAR(255),
+        vehicle_color_standardized VARCHAR(3),
+        year_number INT,
+        month_number INT
     );"""
 
     create_stage_issuingagency = """CREATE TABLE IF NOT EXISTS stage_issuingagency
@@ -182,7 +185,6 @@ class SqlQueries:
     SECRET_ACCESS_KEY '{}'
     REGION 'us-east-1'
     FORMAT {}
-    IGNOREHEADER {}
     COMPUPDATE OFF
     STATUPDATE OFF"""
 
@@ -229,7 +231,7 @@ class SqlQueries:
     
     body_style (vehicle_body_type) as
     (
-        select distinct vehicle_body_type from stage_parkingviolation sp
+        select distinct vehicle_body_type from stage_parking_violations sp
         union
         select distinct "body type" from stage_vehicle sv
     ),
@@ -339,6 +341,65 @@ class SqlQueries:
         agencycode as issuing_agency_key,
         name as agency_name
     from stage_issuingagency si;
+    """
+
+    insert_dim_time = """
+    -- TODO: finish the insert into dim_time where not exists, blah blah blah... and add some blasted comments!!
+    with times (violation_time, hour_num, minute_num, ap, stringtime)
+    as
+    (
+    select distinct  
+        violation_time,
+        left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 2),
+        substring(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 3, 2),
+        case
+            when right(violation_time, 1) similar to '[0-9]' and left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 2) >= 12
+                then 'P'
+            when right(violation_time, 1) similar to '[0-9]' and left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 2) < 12
+                then 'A'
+            when right(violation_time, 1) similar to '[AP]'
+                then 
+                right(violation_time, 1)
+            else 'A'
+            end,
+        case
+            when right(violation_time, 1) = 'P'
+                then cast(cast(left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), len(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'))-1) as int) % 1200 + 1200 as varchar(10))
+            when right(violation_time, 1) = 'A'
+                then ltrim(to_char(cast(left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), len(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'))-1) as int) % 1200, '0999'))
+            when right(violation_time, 1) similar to '[0-9]'
+                then violation_time
+            else '0000'
+            end
+    from stage_parking_violations spv
+    ),
+    
+    alltimes (stringtime, timeval, military_display_time, hour_num, minute_num, ap)
+    as
+    (
+    select distinct
+        stringtime,
+        cast('1900-01-01 ' + left(stringtime, 2) + ':' + right(stringtime, 2) + ':00.000' as timestamp),
+        left(stringtime, 2) + ':' + right(stringtime, 2) as military_display_time,
+        case
+            when cast(left(stringtime, 2) as int) = 0 or cast(left(stringtime, 2) as int) > 12
+                then abs(cast(left(stringtime, 2) as int) - 12)
+            else cast(left(stringtime, 2) as int)
+            end as hour_num,
+        cast(right(stringtime, 2) as int),
+        ap + 'M'
+    from times
+    )
+    
+    select
+        datediff(minute, '1900-01-01 00:00:00', timeval) as time_key,
+        timeval as time_timestamp,
+        hour_num as hour_number,
+        minute_num as minute_number,
+        ap as am_pm,
+        military_display_time,
+        cast(left(military_display_time, 2) as int) as military_time_hour_number
+    from alltimes;
     """
 
     def get_sql_command(self, table_name, table_action):

@@ -31,12 +31,12 @@ def create_data_warehouse():
                       ddl_queries.create_dim_vehicle, ddl_queries.create_dim_registrationstate,
                       ddl_queries.create_dim_violation, ddl_queries.create_dim_precinct,
                       ddl_queries.create_dim_issuingagency, ddl_queries.create_fact_parkingviolation,
-                      ddl_queries.create_stage_parkingviolation, ddl_queries.create_stage_issuingagency,
+                      ddl_queries.create_stage_parking_violations, ddl_queries.create_stage_issuingagency,
                       ddl_queries.create_stage_precinct, ddl_queries.create_stage_registrationstate,
                       ddl_queries.create_stage_vehicle, ddl_queries.create_stage_violation]
 
     table_names = ['stage_violation', 'stage_vehicle', 'stage_registrationstate', 'stage_precinct', 'stage_issuingagency',
-                   'stage_parkingviolation', 'fact_parkingviolation', 'dim_issuingagency', 'dim_precinct',
+                   'stage_parking_violations', 'fact_parkingviolation', 'dim_issuingagency', 'dim_precinct',
                    'dim_violation', 'dim_registrationstate', 'dim_vehicle', 'dim_borough', 'dim_time', 'dim_date']
 
     with redshift.cursor() as crsr:

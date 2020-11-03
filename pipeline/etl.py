@@ -28,7 +28,7 @@ def run_pipeline():
         config['DWH']['DWH_DB_PASSWORD'])
 
     stage_tables = ['stage_issuingagency', 'stage_precinct', 'stage_registrationstate',
-                    'stage_vehicle', 'stage_violation'] #'stage_parkingviolation'
+                    'stage_vehicle', 'stage_violation', 'stage_parking_violations']
 
     dim_tables = ['dim_vehicle', 'dim_registrationstate', 'dim_violation', 'dim_borough', 'dim_precinct',
                   'dim_issuingagency']
@@ -39,13 +39,21 @@ def run_pipeline():
             redshift.commit()
 
         for table in stage_tables:
-            crsr.execute(etl_queries.copy_sql_format.format(
-                table,
-                's3://farchila-udacity-final/' + table.replace('stage_', ''),
-                config['AWS']['KEY'],
-                config['AWS']['SECRET'],
-                'CSV',
-                '1'))
+            if table == 'stage_parking_violations':
+                crsr.execute(etl_queries.copy_sql_format.format(
+                    table,
+                    's3://farchila-udacity-final/' + table.replace('stage_', ''),
+                    config['AWS']['KEY'],
+                    config['AWS']['SECRET'],
+                    'JSON \'auto\''))
+            else:
+                crsr.execute(etl_queries.copy_sql_format.format(
+                    table,
+                    's3://farchila-udacity-final/' + table.replace('stage_', ''),
+                    config['AWS']['KEY'],
+                    config['AWS']['SECRET'],
+                    'CSV\r\nIGNOREHEADER 1'))
+
             redshift.commit()
 
         for table in dim_tables:
