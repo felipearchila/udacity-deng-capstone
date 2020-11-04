@@ -31,7 +31,9 @@ def run_pipeline():
                     'stage_vehicle', 'stage_violation', 'stage_parking_violations']
 
     dim_tables = ['dim_vehicle', 'dim_registrationstate', 'dim_violation', 'dim_borough', 'dim_precinct',
-                  'dim_issuingagency']
+                  'dim_issuingagency', 'dim_time', 'dim_date']
+
+    fact_tables = ['fact_parkingviolation']
 
     with redshift.cursor() as crsr:
         for table in stage_tables:
@@ -57,6 +59,12 @@ def run_pipeline():
             redshift.commit()
 
         for table in dim_tables:
+            print(table)
+            crsr.execute(etl_queries.get_sql_command(table, 'insert'))
+            redshift.commit()
+
+        for table in fact_tables:
+            print(table)
             crsr.execute(etl_queries.get_sql_command(table, 'insert'))
             redshift.commit()
 
