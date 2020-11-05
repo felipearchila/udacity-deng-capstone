@@ -1,4 +1,27 @@
 class SqlQueries:
+    """
+    Provides a centralized repository for all DDL and DML for the creation and maintenance of the data warehouse, as
+    well as some generic SQL format strings to which you just pass a few parameters.
+    """
+
+    copy_sql_format = """COPY {} 
+    FROM '{}'
+    ACCESS_KEY_ID '{}'
+    SECRET_ACCESS_KEY '{}'
+    REGION 'us-east-1'
+    FORMAT {}
+    COMPUPDATE OFF
+    STATUPDATE OFF"""
+
+    drop_sql_format = "DROP TABLE IF EXISTS {}"
+
+    truncate_sql_format = "TRUNCATE TABLE {}"
+
+    create_dim_borough = """CREATE TABLE IF NOT EXISTS dim_borough
+    (
+        borough_key INT PRIMARY KEY DISTKEY SORTKEY,
+        borough_name VARCHAR(255)
+    );"""
 
     create_dim_date = """CREATE TABLE IF NOT EXISTS dim_date
     (
@@ -12,6 +35,27 @@ class SqlQueries:
         is_weekday BOOLEAN
     );"""
 
+    create_dim_issuingagency = """CREATE TABLE IF NOT EXISTS dim_issuingagency
+    (
+        issuing_agency_key CHAR(1) PRIMARY KEY DISTKEY SORTKEY,
+        agency_name VARCHAR(255)
+    );"""
+
+    create_dim_precinct = """CREATE TABLE IF NOT EXISTS dim_precinct
+    (
+        precinct_key INT PRIMARY KEY DISTKEY SORTKEY,
+        precinct_name VARCHAR(255),
+        precinct_address VARCHAR(255),
+        is_below_96th BOOLEAN
+    );"""
+
+    create_dim_registrationstate = """CREATE TABLE IF NOT EXISTS dim_registrationstate
+    (
+        registration_state_key CHAR(2) PRIMARY KEY DISTKEY SORTKEY,
+        state_name VARCHAR(50),
+        postal_code CHAR(2)
+    );"""
+
     create_dim_time = """CREATE TABLE IF NOT EXISTS dim_time
     (
         time_key INT PRIMARY KEY DISTKEY SORTKEY,
@@ -23,15 +67,9 @@ class SqlQueries:
         military_time_hour_number INT
     );"""
 
-    create_dim_borough = """CREATE TABLE IF NOT EXISTS dim_borough
-    (
-        borough_key INT PRIMARY KEY DISTKEY SORTKEY,
-        borough_name VARCHAR(255)
-    );"""
-
     create_dim_vehicle = """CREATE TABLE IF NOT EXISTS dim_vehicle
     (
-        vehicle_key INT IDENTITY(1,1) PRIMARY KEY DISTKEY,
+        vehicle_key INT IDENTITY(0,1) PRIMARY KEY DISTKEY,
         vehicle_code VARCHAR(5),
         make VARCHAR(50),
         body_style VARCHAR(50),
@@ -41,33 +79,12 @@ class SqlQueries:
     COMPOUND SORTKEY (make, body_style, color_code);
     """
 
-    create_dim_registrationstate = """CREATE TABLE IF NOT EXISTS dim_registrationstate
-    (
-        registration_state_key CHAR(2) PRIMARY KEY DISTKEY SORTKEY,
-        state_name VARCHAR(50),
-        postal_code CHAR(2)
-    );"""
-
     create_dim_violation = """CREATE TABLE IF NOT EXISTS dim_violation
     (
         violation_key INT PRIMARY KEY DISTKEY SORTKEY,
         violation_description VARCHAR(255),
         fine_amount_96th_st_below INT,
         fine_amount_other INT
-    );"""
-
-    create_dim_precinct = """CREATE TABLE IF NOT EXISTS dim_precinct
-    (
-        precinct_key INT PRIMARY KEY DISTKEY SORTKEY,
-        precinct_name VARCHAR(255),
-        precinct_address VARCHAR(255),
-        is_below_96th BOOLEAN
-    );"""
-
-    create_dim_issuingagency = """CREATE TABLE IF NOT EXISTS dim_issuingagency
-    (
-        issuing_agency_key CHAR(1) PRIMARY KEY DISTKEY SORTKEY,
-        agency_name VARCHAR(255)
     );"""
 
     create_fact_parkingviolation = """CREATE TABLE IF NOT EXISTS fact_parkingviolation
@@ -91,9 +108,12 @@ class SqlQueries:
         vehicle_year INT
     );"""
 
-    truncate_sql_format = "TRUNCATE TABLE {}"
-
-    drop_sql_format = "DROP TABLE IF EXISTS {}"
+    create_stage_issuingagency = """CREATE TABLE IF NOT EXISTS stage_issuingagency
+    (
+        AgencyCode VARCHAR(255),
+        Name VARCHAR(255)
+    );
+    """
 
     create_stage_parking_violations = """CREATE TABLE IF NOT EXISTS stage_parking_violations
     (
@@ -141,13 +161,6 @@ class SqlQueries:
         month_number INT
     );"""
 
-    create_stage_issuingagency = """CREATE TABLE IF NOT EXISTS stage_issuingagency
-    (
-        AgencyCode VARCHAR(255),
-        Name VARCHAR(255)
-    );
-    """
-
     create_stage_precinct = """CREATE TABLE IF NOT EXISTS stage_precinct
     (
         PrecinctCode VARCHAR(255),
@@ -180,14 +193,206 @@ class SqlQueries:
         FineAmountOther VARCHAR(255)
     );"""
 
-    copy_sql_format = """COPY {} 
-    FROM '{}'
-    ACCESS_KEY_ID '{}'
-    SECRET_ACCESS_KEY '{}'
-    REGION 'us-east-1'
-    FORMAT {}
-    COMPUPDATE OFF
-    STATUPDATE OFF"""
+    insert_dim_borough = """
+    insert into dim_borough
+    (
+        borough_key,
+        borough_name 
+    )
+
+    with first_precincts
+    as
+    (
+        select 
+            min(cast(precinctcode as int)) as first_precinct, borough
+        from stage_precinct sp
+        group by borough
+    )
+
+    select
+        rank() over (order by first_precinct) as borough_key,
+        borough as borough_name
+    from first_precincts
+    union
+    select
+        0 as borough_key,
+        'Unknown' as borough_name;
+    """
+
+    insert_dim_date = """
+    insert into dim_date
+    (
+        date_key,
+        calendar_date,
+        year_number,
+        month_number,
+        day_number,
+        quarter_number,
+        day_of_the_week,
+        is_weekday
+    )
+
+    with datesource(date_key, calendar_date)
+    as
+    (
+        select distinct
+            cast(to_char(cast(issue_date as timestamp), 'YYYYMMDD') as int),
+            cast(issue_date as timestamp)
+        from stage_parking_violations spv
+        union
+        select distinct
+            cast(replace(left(replace(vehicle_expiration_date, '0E-8', '88880088.0'), len(replace(vehicle_expiration_date, '0E-8', '88880088.0'))-2), '88880088', '19000101') as int),
+            to_date(replace(left(replace(vehicle_expiration_date, '0E-8', '88880088.0'), len(replace(vehicle_expiration_date, '0E-8', '88880088.0'))-2), '88880088', '19000101'), 'YYYYMMDD')
+        from stage_parking_violations spv
+    )
+
+    select
+        datesource.date_key,
+        datesource.calendar_date,
+        date_part(year, datesource.calendar_date) as year_number,
+        date_part(month, datesource.calendar_date) as month_number,
+        date_part(day, datesource.calendar_date) as day_number,
+        date_part(quarter, datesource.calendar_date) as quarter_number,
+        to_char(datesource.calendar_date, 'Day') as day_of_the_week,
+        case
+            when date_part(weekday, datesource.calendar_date) between 1 and 5
+                then true
+            else false
+            end as is_weekday
+    from datesource
+    left join dim_date
+        on datesource.date_key = dim_date.date_key
+    where dim_date.date_key is null;
+    """
+
+    insert_dim_issuingagency = """
+    insert into dim_issuingagency
+    (
+        issuing_agency_key,
+        agency_name
+    )
+
+    select
+        agencycode as issuing_agency_key,
+        name as agency_name
+    from stage_issuingagency si;
+    """
+
+    insert_dim_precinct = """
+    insert into dim_precinct
+    (
+        precinct_key,
+        precinct_name,
+        precinct_address,
+        is_below_96th
+    )
+
+    select
+        cast(precinctcode as int) as precinct_key,
+        name as precinct_name,
+        address as precinct_address,
+        cast(cast(flagbelow96th as int) as boolean) as is_below_96th    
+    from stage_precinct sp
+    union
+    select
+        0 as precinct_key,
+        'Unknown' as precinct_name,
+        '' as precinct_address,
+        false as is_below_96th;
+    """
+
+    insert_dim_registrationstate = """
+    insert into dim_registrationstate
+    (
+        registration_state_key,
+        state_name,
+        postal_code
+    )
+
+    select
+        "postal code" as registration_state_key,
+        "geographic area" as state_name,
+        "postal code" as postal_code
+    from stage_registrationstate sr
+    where "postal code" <> ''
+    union
+    select
+        'UK' as registration_state_key,
+        'Unknown' as state_name,
+        'UK' as postal_code;
+    """
+
+    insert_dim_time = """
+    insert into dim_time
+    (
+        time_key,
+        time_timestamp,
+        hour_number,
+        minute_number,
+        am_pm,
+        military_display_time,
+        military_time_hour_number
+    )
+
+    with times (violation_time, hour_num, minute_num, ap, stringtime)
+    as
+    (
+    select distinct  
+        violation_time,
+        left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 2),
+        substring(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 3, 2),
+        case
+            when right(violation_time, 1) similar to '[0-9]' and left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 2) >= 12
+                then 'P'
+            when right(violation_time, 1) similar to '[0-9]' and left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 2) < 12
+                then 'A'
+            when right(violation_time, 1) similar to '[AP]'
+                then 
+                right(violation_time, 1)
+            else 'A'
+            end,
+        case
+            when right(violation_time, 1) = 'P'
+                then cast(cast(left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), len(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'))-1) as int) % 1200 + 1200 as varchar(10))
+            when right(violation_time, 1) = 'A'
+                then ltrim(to_char(cast(left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), len(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'))-1) as int) % 1200, '0999'))
+            when right(violation_time, 1) similar to '[0-9]'
+                then violation_time
+            else '0000'
+            end
+    from stage_parking_violations spv
+    ),
+
+    alltimes (stringtime, timeval, military_display_time, hour_num, minute_num, ap)
+    as
+    (
+    select distinct
+        stringtime,
+        cast('1900-01-01 ' + left(stringtime, 2) + ':' + right(stringtime, 2) + ':00.000' as timestamp),
+        left(stringtime, 2) + ':' + right(stringtime, 2) as military_display_time,
+        case
+            when cast(left(stringtime, 2) as int) = 0 or cast(left(stringtime, 2) as int) > 12
+                then abs(cast(left(stringtime, 2) as int) - 12)
+            else cast(left(stringtime, 2) as int)
+            end as hour_num,
+        cast(right(stringtime, 2) as int),
+        ap + 'M'
+    from times
+    )
+
+    select
+        datediff(minute, '1900-01-01 00:00:00', alltimes.timeval) as time_key,
+        alltimes.timeval as time_timestamp,
+        alltimes.hour_num as hour_number,
+        alltimes.minute_num as minute_number,
+        alltimes.ap as am_pm,
+        alltimes.military_display_time,
+        cast(left(alltimes.military_display_time, 2) as int) as military_time_hour_number
+    from alltimes
+    left join dim_time
+        on  datediff(minute, '1900-01-01 00:00:00', alltimes.timeval) = dim_time.time_key
+    where dim_time.time_key is null;
+    """
 
     insert_dim_vehicle = """
     insert into dim_vehicle
@@ -260,27 +465,6 @@ class SqlQueries:
     where dv.vehicle_key is null;
     """
 
-    insert_dim_registrationstate = """
-    insert into dim_registrationstate
-    (
-        registration_state_key,
-        state_name,
-        postal_code
-    )
-    
-    select
-        "postal code" as registration_state_key,
-        "geographic area" as state_name,
-        "postal code" as postal_code
-    from stage_registrationstate sr
-    where "postal code" <> ''
-    union
-    select
-        'UK' as registration_state_key,
-        'Unknown' as state_name,
-        'UK' as postal_code;
-    """
-
     insert_dim_violation = """
     insert into dim_violation
     (
@@ -295,177 +479,13 @@ class SqlQueries:
         "violation description" as violation_description,
         cast(fineamount96thstbelow as int) as fine_amount_96th_st_below,
         cast(fineamountother as int) as fine_amount_other
-    from stage_violation sv;
-    """
-
-    insert_dim_borough = """
-    insert into dim_borough
-    (
-        borough_key,
-        borough_name 
-    )
-    
-    with first_precincts
-    as
-    (
-        select 
-            min(cast(precinctcode as int)) as first_precinct, borough
-        from stage_precinct sp
-        group by borough
-    )
-    
+    from stage_violation sv
+    union
     select
-        rank() over (order by first_precinct) as borough_key,
-        borough as borough_name
-    from first_precincts;
-    """
-
-    insert_dim_precinct = """
-    insert into dim_precinct
-    (
-        precinct_key,
-        precinct_name,
-        precinct_address,
-        is_below_96th
-    )
-    
-    select
-        cast(precinctcode as int) as precinct_key,
-        name as precinct_name,
-        address as precinct_address,
-        cast(cast(flagbelow96th as int) as boolean) as is_below_96th    
-    from stage_precinct sp;
-    """
-
-    insert_dim_issuingagency = """
-    insert into dim_issuingagency
-    (
-        issuing_agency_key,
-        agency_name
-    )
-    
-    select
-        agencycode as issuing_agency_key,
-        name as agency_name
-    from stage_issuingagency si;
-    """
-
-    insert_dim_time = """
-    insert into dim_time
-    (
-        time_key,
-        time_timestamp,
-        hour_number,
-        minute_number,
-        am_pm,
-        military_display_time,
-        military_time_hour_number
-    )
-    
-    with times (violation_time, hour_num, minute_num, ap, stringtime)
-    as
-    (
-    select distinct  
-        violation_time,
-        left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 2),
-        substring(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 3, 2),
-        case
-            when right(violation_time, 1) similar to '[0-9]' and left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 2) >= 12
-                then 'P'
-            when right(violation_time, 1) similar to '[0-9]' and left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), 2) < 12
-                then 'A'
-            when right(violation_time, 1) similar to '[AP]'
-                then 
-                right(violation_time, 1)
-            else 'A'
-            end,
-        case
-            when right(violation_time, 1) = 'P'
-                then cast(cast(left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), len(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'))-1) as int) % 1200 + 1200 as varchar(10))
-            when right(violation_time, 1) = 'A'
-                then ltrim(to_char(cast(left(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'), len(regexp_replace(violation_time, '[a-zB-OQ-Z\s\. ]', '0'))-1) as int) % 1200, '0999'))
-            when right(violation_time, 1) similar to '[0-9]'
-                then violation_time
-            else '0000'
-            end
-    from stage_parking_violations spv
-    ),
-    
-    alltimes (stringtime, timeval, military_display_time, hour_num, minute_num, ap)
-    as
-    (
-    select distinct
-        stringtime,
-        cast('1900-01-01 ' + left(stringtime, 2) + ':' + right(stringtime, 2) + ':00.000' as timestamp),
-        left(stringtime, 2) + ':' + right(stringtime, 2) as military_display_time,
-        case
-            when cast(left(stringtime, 2) as int) = 0 or cast(left(stringtime, 2) as int) > 12
-                then abs(cast(left(stringtime, 2) as int) - 12)
-            else cast(left(stringtime, 2) as int)
-            end as hour_num,
-        cast(right(stringtime, 2) as int),
-        ap + 'M'
-    from times
-    )
-    
-    select
-        datediff(minute, '1900-01-01 00:00:00', alltimes.timeval) as time_key,
-        alltimes.timeval as time_timestamp,
-        alltimes.hour_num as hour_number,
-        alltimes.minute_num as minute_number,
-        alltimes.ap as am_pm,
-        alltimes.military_display_time,
-        cast(left(alltimes.military_display_time, 2) as int) as military_time_hour_number
-    from alltimes
-    left join dim_time
-        on  datediff(minute, '1900-01-01 00:00:00', alltimes.timeval) = dim_time.time_key
-    where dim_time.time_key is null;
-    """
-
-    insert_dim_date = """
-    insert into dim_date
-    (
-        date_key,
-        calendar_date,
-        year_number,
-        month_number,
-        day_number,
-        quarter_number,
-        day_of_the_week,
-        is_weekday
-    )
-    
-    with datesource(date_key, calendar_date)
-    as
-    (
-        select distinct
-            cast(to_char(cast(issue_date as timestamp), 'YYYYMMDD') as int),
-            cast(issue_date as timestamp)
-        from stage_parking_violations spv
-        union
-        select distinct
-            cast(replace(left(replace(vehicle_expiration_date, '0E-8', '88880088.0'), len(replace(vehicle_expiration_date, '0E-8', '88880088.0'))-2), '88880088', '19000101') as int),
-            to_date(replace(left(replace(vehicle_expiration_date, '0E-8', '88880088.0'), len(replace(vehicle_expiration_date, '0E-8', '88880088.0'))-2), '88880088', '19000101'), 'YYYYMMDD')
-        from stage_parking_violations spv
-    )
-    
-    select
-        datesource.date_key,
-        datesource.calendar_date,
-        date_part(year, datesource.calendar_date) as year_number,
-        date_part(month, datesource.calendar_date) as month_number,
-        date_part(day, datesource.calendar_date) as day_number,
-        date_part(quarter, datesource.calendar_date) as quarter_number,
-        to_char(datesource.calendar_date, 'Day') as day_of_the_week,
-        case
-            when date_part(weekday, datesource.calendar_date) between 1 and 5
-                then true
-            else false
-            end as is_weekday
-    from datesource
-    left join dim_date
-        on datesource.date_key = dim_date.date_key
-    where dim_date.date_key is null;
+        0 as violation_key,
+        'Unknown' as violation_description,
+        0 as fine_amount_96th_st_below,
+        0 as fine_amount_other;
     """
 
     insert_fact_parkingviolation = """
@@ -512,12 +532,12 @@ class SqlQueries:
         replace(spv.registration_state, '99', 'UK') as registration_state_key,
         replace(spv.plate_type, '999', 'UNK') as plate_type,
         case
-            when sp.flagbelow96th = '1'
+            when violationprecinct.flagbelow96th = '1'
                 then cast(sv.fineamount96thstbelow as int)
             else coalesce(cast(sv.fineamountother as int), 0)
             end as fine_amount,
         cast(to_char(cast(spv.issue_date as timestamp), 'YYYYMMDD') as int) as issue_date_key,
-        cast(spv.violation_code as int) as violation_key,
+        coalesce(cast(sv."violation code" as int), 0) as violation_key,
         coalesce(dv.vehicle_key, 0) as vehicle_key,
         spv.issuing_agency as issuing_agency_key,
         cast(
@@ -528,8 +548,8 @@ class SqlQueries:
                 '88880088', '19000101')
             as int)
             as vehicle_expiration_date_key,
-        cast(spv.violation_precinct as int) as violation_precinct_key,
-        cast(spv.issuer_precinct as int) as issuer_precinct_key,
+        coalesce(cast(violationprecinct.precinctcode as int), 0) as violation_precinct_key,
+        coalesce(cast(issueprecinct.precinctcode as int), 0) as issuer_precinct_key,
         coalesce(db.borough_key, 0) as borough_key,
         datediff(minute, '1900-01-01 00:00:00', cast(
             '1900-01-01 ' + left(processed_time.stringtime, 2) + ':' + right(processed_time.stringtime, 2) + ':00.000'
@@ -540,12 +560,14 @@ class SqlQueries:
     from stage_parking_violations spv
     left join stage_violation sv
         on spv.violation_code = sv."violation code"
-    left join stage_precinct sp
-        on spv.violation_precinct = sp.precinctcode
+    left join stage_precinct violationprecinct
+        on spv.violation_precinct = violationprecinct.precinctcode
     left join dim_borough db
-        on sp.borough = db.borough_name
+        on violationprecinct.borough = db.borough_name
+    left join stage_precinct issueprecinct
+        on spv.issuer_precinct = issueprecinct.precinctcode
     left join dim_vehicle dv
-        on spv.vehicle_make = dv.make
+        on replace(spv.vehicle_make, 'NaN', '') = dv.make
             and spv.vehicle_body_type = dv.body_style
             and spv.vehicle_color_standardized = dv.color_code
     join processed_time
@@ -555,7 +577,29 @@ class SqlQueries:
     where f.parking_violation_key is null;
     """
 
+    zerosk_dim_vehicle = """
+    insert into dim_vehicle
+    (
+        vehicle_code,
+        make,
+        body_style,
+        color_code,
+        color_description
+    )
+    
+    select 'UNK', 'UNK', 'UNK', 'OTH', 'Other/Unknown'
+    where not exists(select 1 from dim_vehicle);
+    """
+
     def get_sql_command(self, table_name, table_action):
+        """
+        A helper function that will dynamically retrieve an attribute of the SqlQueries class, which are all SQL
+        scripts, based on what the table and action names are. If a table or action doesn't exist, it will raise
+        an AttributeError.
+        :param table_name: The name of the table you'd like to take action on
+        :param table_action: The desired action. Accepted values are "create" and "insert"
+        :return: the class attribute, a SQL string, that matches the target table and action.
+        """
         full_attr = f"{table_action}_{table_name}"
         try:
             sql = self.__getattribute__(full_attr)
