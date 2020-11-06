@@ -3,6 +3,9 @@ from helpers.redshift_connection import initialize_connection
 from helpers.sql_queries import SqlQueries
 
 
+query_helper = SqlQueries()
+
+
 def create_data_warehouse():
     """
     The main driver of this script. This will instantiate a connection to the data warehouse and run DROP and CREATE
@@ -11,8 +14,6 @@ def create_data_warehouse():
     """
     config = configparser.ConfigParser()
     config.read_file(open('dwh.cfg'))
-
-    query_helper = SqlQueries()
 
     redshift = initialize_connection(
         config['DWH']['DWH_ENDPOINT'],
@@ -39,5 +40,9 @@ def create_data_warehouse():
     print("Creation of the Parking Violations data warehouse complete!")
 
 
-if __name__ == "__main__":
+def main():
     create_data_warehouse()
+
+
+if __name__ == "__main__":
+    main()
